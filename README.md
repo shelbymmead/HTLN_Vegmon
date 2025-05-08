@@ -1,5 +1,6 @@
 # HTLN_Vegmon
 Vegetation Monitoring overstory, regeneration, and canopy analysis code for Heartland Inventory and Monitoring parks. Code relies on data from the VegMon Access database that is exported as flat files and uploaded in the R script. 
+Instructions on how to run this Rms are found in the readme file. 
 
 These are the calculations done:
 Calculate Basal Area m2/ha (run for live and dead separately).  
