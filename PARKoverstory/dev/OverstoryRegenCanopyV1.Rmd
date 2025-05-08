@@ -1,0 +1,807 @@
+---
+title: "Vegmon Script"
+output:
+  word_document: default
+  html_document: default
+date: "2024-12-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# HOSP 2007-2024 Overstory, Regen, Canopy Analysis
+
+Code developed by Shelby Mead
+
+## Set-up IMPORTANT
+
+This chunk of code loads all needed packages
+
+```{r}
+##if you have never downloaded these packages, you must download by removing the # in next 4 lines:
+#install.packages("tidyverse")
+#install.packages("ggplot2")
+#install.packages("dplyr")
+#install.packages("stringr")
+
+
+#Otherwise, only these lines will run
+library(tidyverse)
+library(ggplot2)
+library(dplyr)
+library(stringr)
+library(rstatix)
+
+```
+
+This chunk of code reads in data
+
+```{r}
+Canopy <- read.csv("data//HOSPCanopy07_24.csv")
+Overstory <- read.csv("data//HOSPOverstoryClean07_24.csv")
+Regeneration <- read.csv("data//HOSPRegeneration07_24Clean.csv")
+```
+
+This chunk creates constants that will be used in the code
+
+```{r}
+Overstory <- Overstory %>%
+  mutate(Class = case_when(DBH < 15 ~ '1',
+                           DBH >= 15 & DBH < 25 ~ '2',
+                           DBH >= 25 & DBH < 35 ~ '3',
+                           DBH >= 35 & DBH < 45 ~ '4',
+                           DBH >= 45 ~ '5'))%>% #makes class groupings
+  mutate(Year2 = as.character(Year2))%>%
+ filter(AcceptedSpecies != "Viburnum rufidulum") #filters out vibu rufi, no longer classified as overstory
+
+n <- length(unique(Canopy$LocationID))  #sets 'n' as number of sites, if not all sites are measured in all years just enter site number manually 
+
+Year <- c('2007','2014','2024')
+Site <- 1:7
+Class <-1:5
+supplement <- crossing(Year, Site, Class) #creates dataframe so all combos of year, site, and class can have a zero value
+
+theme <- theme(axis.text.x = element_text(color = "grey20", size = 10, angle = 0, hjust = .5, vjust = .5, face = "plain",family     = "sans"),
+        axis.text.y = element_text(color = "grey20", size = 10, angle = 0, hjust = 1, vjust = 0, face = "plain", family = "sans"),  
+    axis.title.x = element_text(color = "grey20", size = 14, angle = 0, hjust = .5, vjust = 0, face = "plain", family
+    = "sans"),
+    axis.title.y = element_text(color = "grey20", size = 14, angle = 90, hjust = .5, vjust = .5, face = "plain", family = "sans"),
+    legend.text = element_text(size = 10, hjust = .5, face = "plain",family = "sans"),
+    legend.title = element_text(size = 14, face = "plain", family = "sans"),
+    title = element_text(size = 14, face = "plain", family = "sans")) #this makes a text theme that can be used in all graphs (don't have to type out every time)
+  
+```
+
+# Basal Area
+
+##Live This chunk runs BA- live analysis
+
+```{r}
+
+BA_Site_Class <- Overstory %>%
+  filter(Condition == "L",
+           SpeciesCode != "SNAG") %>% #sort live and dead
+  mutate(BA_ha = DBH^2*(0.00007854)/0.1,
+         Year2 = as.character(Year2))%>% #calculate basal area per ha
+  group_by(Year2, Site, Class)%>%
+  summarise(BA_site = sum(BA_ha)) #calculate BA per site by class
+
+
+BA_Site_Class <- supplement %>%
+  mutate(Class = as.character(Class))%>%
+  left_join(BA_Site_Class, by = c('Year' = 'Year2', 'Site', 'Class')) %>%
+  replace(is.na(.),0) #joining Ba data to dataframe with all combos of year and site
+
+BA_Year_Class <- BA_Site_Class %>%
+  group_by(Year, Class)%>%
+  summarise(BA_Year_Class = (sum(BA_site)/n), #calculating average BA for each class
+            SD = sd(BA_site))%>%  #calculating standard deviation of BA for each class
+  mutate(CI_low =  BA_Year_Class - (1.959964*(SD/sqrt(n))), #calculating low limit of Confidence interval
+         CI_high = BA_Year_Class + (1.959964*(SD/sqrt(n)))) #calculating high limit of confidence interval
+write.csv(BA_Year_Class, 'Output Tables//BasalArea_Class.csv')
+BA_Year_Class
+
+BA_Year <- BA_Site_Class %>%
+  group_by(Year, Site) %>%
+  summarise(BA_Site = sum(BA_site))%>%
+  group_by(Year) %>%
+  summarise(BA_Year = (sum(BA_Site)/n), #calculating average BA per year
+            SD_BA_Year = sd(BA_Site))%>% #standard deviation of BA each year
+  mutate(CIlow =  BA_Year - (1.959964*(SD_BA_Year/sqrt(5))),#low limit of confidence interval
+         CIhigh = BA_Year + (1.959964*(SD_BA_Year/sqrt(5)))) #high limit of confidence interval
+write.csv(BA_Year, 'Output Tables//BasalArea.csv')
+BA_Year
+
+
+```
+
+This chunk creates BA-live graphs
+
+```{r}
+YearBA <- ggplot(BA_Year)+ #makes a plot using BA_Year dataset we just created
+  geom_col(aes(x = Year, y = BA_Year),width= 0.5, fill = '#437d69', color = 'gray30')+ #bar graph and specifications
+ labs(y = bquote('Mean Basal Area ' ~ (m^2/ha)))+
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Year, ymin = CIlow, ymax= CIhigh), width = 0.1, size =0.2)+ #adds error bars
+  theme
+YearBA
+ggsave('BasalArea.jpg', dpi = 300, path = "Output Graphs") #saves basal area graph to Output Graphs
+
+BA_by_class <- ggplot(BA_Year_Class, aes(x = Class, y =BA_Year_Class, fill=Year))+ #makes plot using our BA_Year_Class dataset, color by class
+  geom_col(position = 'dodge')+ #position dodge makes columns adjacent
+  scale_fill_grey()+ #manual color scale of bars
+  labs(y = bquote('Mean Basal Area ' ~ (m^2/ha)))+
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Class, ymin = ifelse(CI_low>0, CI_low,0), ymax=CI_high), position = position_dodge(0.9), width =0.2, size =0.2)+
+  coord_cartesian(ylim = c(0,10), clip = 'on')+ #come back and fix so it cuts off at 0
+  #adds error bars
+  theme
+BA_by_class
+ggsave('BasalArea_by_class.jpg', dpi = 300, path= "Output Graphs", height =5)#saves basal area by class graph to Output Graphs
+```
+
+## Dead
+
+This chunk runs BA-dead analysis
+
+```{r}
+
+BA_Site_Class_D <- Overstory %>%
+  filter(Condition == "D") %>% #sort live and dead
+  mutate(BA_ha = DBH^2*(0.00007854)/0.1,
+         Year2 = as.character(Year2))%>% #calculate basal area per ha
+  group_by(Year2, Site, Class)%>%
+  summarise(BA_site = sum(BA_ha)) #calculate BA per site by class
+
+
+BA_Site_Class_D <- supplement %>%
+  mutate(Class = as.character(Class))%>%
+  left_join(BA_Site_Class_D, by = c('Year' = 'Year2', 'Site', 'Class')) %>%
+  replace(is.na(.),0) #joining extra dataframe to data
+
+BA_Year_Class_D <- BA_Site_Class_D %>%
+  group_by(Year, Class)%>%
+  summarise(BA_Year_Class = (sum(BA_site)/n), #calculating average BA for each class
+            SD = sd(BA_site))%>%  #calculating standard deviation of BA for each class
+  mutate(CI_low =  BA_Year_Class - (1.959964*(SD/sqrt(n))), #calculating low limit of Confidence interval
+         CI_high = BA_Year_Class + (1.959964*(SD/sqrt(n)))) #calculating high limit of confidence interval
+write.csv(BA_Year_Class_D, 'Output Tables//BasalArea_Class_D.csv')
+BA_Year_Class_D
+
+BA_Year_D <- BA_Site_Class_D %>%
+  group_by(Year, Site) %>%
+  summarise(BA_Site = sum(BA_site))%>%
+  group_by(Year) %>%
+  summarise(BA_Year = (sum(BA_Site)/n), #calculating average BA per year
+            SD_BA_Year = sd(BA_Site))%>% #standard deviation of BA each year
+  mutate(CIlow =  BA_Year - (1.959964*(SD_BA_Year/sqrt(5))),#low limit of confidence interval
+         CIhigh = BA_Year + (1.959964*(SD_BA_Year/sqrt(5)))) #high limit of confidence interval
+write.csv(BA_Year_D, 'Output Tables//BasalArea_D.csv')
+BA_Year_D
+
+
+```
+
+This chunk creates BA graphs for dead trees
+
+```{r}
+YearBA_D <- ggplot(BA_Year_D)+ #makes a plot using BA_Year dataset we just created
+  geom_col(aes(x = Year, y = BA_Year),width= 0.5, fill = '#437d69', color = 'gray30')+ #bar graph and specifications
+ labs(y = bquote('Mean Basal Area ' ~ (m^2/ha)))+
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Year, ymin = CIlow, ymax= CIhigh), width = 0.1, size =0.2)+ #adds error bars
+  theme
+YearBA_D
+ggsave('BasalArea_D.jpg', dpi = 300, path = "Output Graphs") #saves basal area graph to Output Graphs
+
+BA_by_class_D <- ggplot(BA_Year_Class_D, aes(x = Class, y =BA_Year_Class, fill=Year))+ #makes plot using our BA_Year_Class dataset, color by class
+  geom_col(position = 'dodge')+ #position dodge makes columns adjacent
+  scale_fill_grey()+ #manual color scale of bars
+  labs(y = bquote('Mean Basal Area ' ~ (m^2/ha)))+
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Class, ymin = ifelse(CI_low>0, CI_low,0), ymax=CI_high), position = position_dodge(0.9), width =0.2, size =0.2)+
+  coord_cartesian(ylim = c(0,10), clip = 'on')+ #come back and fix so it cuts off at 0
+  #adds error bars
+  theme
+BA_by_class_D
+ggsave('BasalArea_by_class_D.jpg', dpi = 300, path= "Output Graphs", height =5)#saves basal area by class graph to Output Graphs
+```
+
+# Density
+
+## Live
+
+This chunk runs the density analysis
+
+```{r}
+Density <- Overstory %>%
+  filter(Condition == 'L', SpeciesCode != "SNAG")%>% #filters out dead trees and snags
+  group_by(Year2, Site, Class)%>%
+  summarise(n())%>%#count number of stems in each density class for each year, site
+  rename(Year = Year2,
+         Count = 'n()')%>%
+  mutate(Year = as.character(Year)) #making Year value character to join with other tables
+
+Density <- supplement%>%
+  mutate(Class = as.character(Class))%>% #Join stem data with supplement table made earlier to 
+  left_join(Density, by = c('Year','Site','Class'))%>%
+  replace(is.na(.),0)%>%
+  mutate(AreaDensity = Count/0.1) #convert to ha
+  
+Density_Year_Class <- Density %>%
+  group_by(Year, Class)%>%
+  summarise(StemDensity = mean(AreaDensity), #Mean density by year, class
+            SD= sd(AreaDensity))%>% #standard deviation by year, class
+   mutate(low = StemDensity - (1.959964*(SD/sqrt(n))),#calculating low limit of Confidence interval
+          high = StemDensity + (1.969964*(SD/sqrt(n))))#calculating high limit of Confidence interval
+write.csv(Density_Year_Class, 'Output Tables//Density_Class.csv')
+Density_Year_Class
+
+Density_Year <- Density %>%
+  group_by(Year,Site)%>%
+  summarise(SiteDensity = sum(AreaDensity))%>%
+  group_by(Year)%>%
+  summarise(StemDensity_Year = (sum(SiteDensity)/n), #calculate mean density by year
+            SD = sd(SiteDensity)) %>%#calculate sd by year
+  mutate(low = StemDensity_Year - (1.959964*(SD/sqrt(5))),#calculating low limit of Confidence interval
+         high = StemDensity_Year + (1.959964*(SD/sqrt(5))))#calculating high limit of Confidence interval
+write.csv(Density_Year, 'Output Tables//Density.csv')
+Density_Year
+```
+
+This chunk makes density graphs
+
+```{r}
+YearDensity <- ggplot(Density_Year, aes(x = Year, y = StemDensity_Year))+ #make ggplot of average density each year, using Density_Year table we just made
+  geom_col(fill = '#437d69', width = 0.5, color = 'gray30')+ # setting bar specifications
+  ylab('Mean Stem Density (stem/ha)')+ #labeling y axis
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Year, ymin = low, ymax= high), width = 0.1, size =0.2)+ #adding error bars
+  theme
+YearDensity
+ggsave('Density.jpg', dpi = 300, path = "Output Graphs")
+
+ClassDensity <- ggplot(Density_Year_Class, aes(x = Class, y = StemDensity, fill = Year))+ #making ggplot of average density in each size class (1-5) from Density_Year_Class table
+  geom_col(position = 'dodge')+ #makes class bars adjacent on x axis
+  scale_fill_grey()+ #manually selecting color scheme of bars
+  ylab('Mean Stem Density (stems/ha)')+ #labeling y axis
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Class, ymin = low, ymax=high), position = position_dodge(0.9), width =0.2, size =0.2)+ #adding error bars 
+  theme
+
+ClassDensity
+ggsave('Density_Class.jpg', dpi = 300, path = "Output Graphs")
+```
+
+## Dead
+
+This chunk runs the density analysis for dead trees
+
+```{r}
+Density_D <- Overstory %>%
+  filter(Condition == 'D')%>% #filters only Dead trees
+  group_by(Year2, Site, Class)%>%
+  summarise(n())%>%#count number of stems in each density class for each year, site
+  rename(Year = Year2,
+         Count = 'n()')%>%
+  mutate(Year = as.character(Year)) #making Year value character to join with other tables
+
+Density_D <- supplement%>%
+  mutate(Class = as.character(Class))%>% #Join stem data with supplement table made earlier to 
+  left_join(Density_D, by = c('Year','Site','Class'))%>%
+  replace(is.na(.),0)%>%
+  mutate(AreaDensity = Count/0.1) #convert to ha
+  
+Density_Year_Class_D <- Density_D %>%
+  group_by(Year, Class)%>%
+  summarise(StemDensity = mean(AreaDensity), #Mean density by year, class
+            SD= sd(AreaDensity))%>% #standard deviation by year, class
+   mutate(low = StemDensity - (1.959964*(SD/sqrt(n))),#calculating low limit of Confidence interval
+          high = StemDensity + (1.969964*(SD/sqrt(n))))#calculating high limit of Confidence interval
+write.csv(Density_Year_Class_D, 'Output Tables//Density_Class_D.csv')
+Density_Year_Class_D
+
+Density_Year_D <- Density_D %>%
+  group_by(Year,Site)%>%
+  summarise(SiteDensity = sum(AreaDensity))%>%
+  group_by(Year)%>%
+  summarise(StemDensity_Year = (sum(SiteDensity)/n), #calculate mean density by year
+            SD = sd(SiteDensity)) %>%#calculate sd by year
+  mutate(low = StemDensity_Year - (1.959964*(SD/sqrt(5))),#calculating low limit of Confidence interval
+         high = StemDensity_Year + (1.959964*(SD/sqrt(5))))#calculating high limit of Confidence interval
+write.csv(Density_Year_D, 'Output Tables//Density_D.csv')
+Density_Year_D
+```
+
+This chunk makes density graphs for dead trees
+
+```{r}
+YearDensity_D <- ggplot(Density_Year_D, aes(x = Year, y = StemDensity_Year))+ #make ggplot of average density each year, using Density_Year table we just made
+  geom_col(fill = '#437d69', width = 0.5, color = 'gray30')+ # setting bar specifications
+  ylab('Mean Stem Density (stem/ha)')+ #labeling y axis
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Year, ymin = low, ymax= high), width = 0.1, size =0.2)+ #adding error bars
+  theme+
+  coord_cartesian(ylim = c(0,1000),clip='off')
+YearDensity_D
+ggsave('Density_D.jpg', dpi = 300, path = "Output Graphs")
+
+ClassDensity_D <- ggplot(Density_Year_Class_D, aes(x = Class, y = StemDensity, fill = Year))+ #making ggplot of average density in each size class (1-5) from Density_Year_Class table
+  geom_col(position = 'dodge')+ #makes class bars adjacent on x axis
+  scale_fill_grey()+ #manually selecting color scheme of bars
+  ylab('Mean Stem Density (stems/ha)')+ #labeling y axis
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Class, ymin = ifelse(low>0, low, 0), ymax=high), position = position_dodge(0.9), width =0.2, size =0.2)+ #adding error bars 
+  theme+
+  coord_cartesian(ylim = c(0,700),clip = 'off')
+
+ClassDensity_D
+ggsave('Density_Class_D.jpg', dpi = 300, path = "Output Graphs")
+```
+
+#Species-Wise Analysis
+
+## Live
+
+```{r}
+## Calculating species change by BA
+Species_BA_Site <- Overstory %>%
+  filter(Condition == "L")%>% #filter for only Live trees
+  mutate(BA_ha = DBH^2*(0.00007854/0.1)) %>% #convert DBH to BA scaled to hectare
+  group_by(Year2, Site, AcceptedSpecies)%>%
+  summarise(BA_site = sum(BA_ha))%>% # summarise basal area for each species in a site
+  na.omit()#calculate BA per site by class
+  
+Species_BA <- Species_BA_Site %>% 
+  group_by(Year2, AcceptedSpecies)%>% 
+  summarise(MeanBA = sum(BA_site/n)) #sumarise basal area mean across sites
+
+PivotSpecies_BA <- Species_BA%>%
+  pivot_wider(names_from = Year2, values_from = MeanBA)%>% #making each species a row with mean BA values for each year
+  arrange(AcceptedSpecies)%>% #alphabetize names 
+  rename(y2007 = "2007", y2014 = "2014", y2024 = "2024")%>% #rename column names for calculations
+  mutate(y2024 = if_else(is.na(y2024),0,y2024))%>%
+  mutate(Change = ((y2024 - y2007)/y2007)*100,# calculates % change
+         y2007 = if_else(is.na(y2007),0,y2007), #set NA as 0 
+         y2014 = if_else(is.na(y2014),0,y2014), #set NA as 0
+         Change_s = y2024 - y2007)%>% # calculates acutal change difference
+  mutate(Direction = if_else(Change_s>0, "Increase", "Decrease")) %>%
+  rename("2007" = y2007, "2014" = y2014, "2024" = y2024) #rename the year columns 
+write.csv(PivotSpecies_BA, 'Output Tables//Species_BA.csv')
+PivotSpecies_BA
+
+## Calculating species change by Density
+Species_Density_Site <- Overstory %>%
+  filter(Condition == "L")%>%
+  na.omit()%>% #removing NA values
+  group_by(Year2, Site, AcceptedSpecies)%>%
+  summarise(Stem_ha = n()/0.1) #convert number of stems to stems/ha
+
+Species_Density <- Species_Density_Site %>%
+  group_by(Year2, AcceptedSpecies)%>%
+  summarise(MeanDensity = sum(Stem_ha)/n) #calculates year mean density for each species
+
+PivotSpecies_Density <- Species_Density%>%
+  pivot_wider(names_from = Year2, values_from = MeanDensity)%>% #arranges rows as species and columns as mean density for each year
+  arrange(AcceptedSpecies) %>%
+  rename(y2007 = "2007", y2014 = "2014", y2024 = "2024")%>% #renames year column headers to allow for calculations
+mutate(y2024 = if_else(is.na(y2024),0,y2024))%>%
+  mutate(Change = ((y2024 - y2007)/y2007)*100, #calculate % change
+         y2007 = if_else(is.na(y2007),0,y2007), #set NA as 0
+         y2014 = if_else(is.na(y2014),0,y2014),#set NA as 0
+         Change_s = y2024 - y2007)%>% #calculates difference
+  mutate(Direction = if_else(Change_s>0, "Increase", "Decrease")) %>% 
+  rename("2007" = y2007, "2014" = y2014, "2024" = y2024)
+write.csv(PivotSpecies_Density, 'Output Tables//Species_Density.csv')
+PivotSpecies_Density
+```
+
+This chunk creates change charts by species name
+
+```{r}
+# Percent change in BA graph
+ggplot(PivotSpecies_BA, aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x= Change, fill = Direction))+ #sets ggplot to show species change in average basal area
+  geom_col(width = 0.4)+ #makes the ggplot a barplot
+  theme_minimal()+ #background theme
+  xlab('% Change in Mean Basal Area')+ #x axis label
+  ylab('Species Name')+ #y axis label
+  scale_fill_manual(breaks = c('Decrease', 'Increase'),
+                    values = c('#FDB338', '#025196'))+ #manually setting color scale
+  scale_x_continuous(breaks = scales::pretty_breaks(n=10))+
+  theme+
+  theme(axis.text.y = element_text(face = "italic"))+
+  geom_vline(xintercept = 0) #adding line at 0
+ggsave('Species_BA_Change.jpg', dpi = 300, height = 8, width = 6, path = "Output Graphs")
+  
+# Percent change in Density graph
+ggplot(PivotSpecies_Density, aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change, fill = Direction))+ # sets ggplot to show species change in density
+  geom_col(width = 0.4)+ #makes the ggplot a barplot
+  theme_minimal()+ #background theme
+  xlab('% Change in Mean Stem Density (Stems/ha)')+ #x axis label
+  ylab('Species Name')+ #y axis label
+  scale_fill_manual(breaks = c('Decrease', 'Increase'),
+                    values = c('#FDB338', '#025196'))+ #manually setting color scale
+  scale_x_continuous(breaks = scales::pretty_breaks(n=12))+
+  theme+
+  theme(axis.text.y = element_text(face = "italic"))+
+  geom_vline(xintercept = 0)
+ggsave('Species_Density_Change.jpg', dpi = 300, height = 8, width = 6, path = "Output Graphs")
+
+## testing- subtraction for BA
+ggplot(PivotSpecies_BA, aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change_s, fill = Direction))+ # sets ggplot to show species change in density
+  geom_col(width = 0.4)+ #makes the ggplot a barplot
+  theme_minimal()+ #background theme
+  xlab('Change in Mean Basal Area')+ #x axis label
+  ylab('Species Name')+ #y axis label
+  scale_fill_manual(breaks = c('Decrease', 'Increase'),
+                    values = c('#FDB338', '#025196'))+ #manually setting color scale
+  scale_x_continuous(breaks = scales::pretty_breaks(n=12))+
+  theme+
+  theme(axis.text.y = element_text(face = "italic"))+
+  geom_vline(xintercept = 0)
+ggsave('Species_BA_Change_subtraction.jpg', dpi = 300, height = 8, width = 6, path = "Output Graphs")
+
+## testing- subtraction for Density
+ggplot(PivotSpecies_Density, aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change_s, fill = Direction))+ # sets ggplot to show species change in density
+  geom_col(width = 0.4)+ #makes the ggplot a barplot
+  theme_minimal()+ #background theme
+  xlab('Change in Mean Stem Density (stems/ha)')+ #x axis label
+  ylab('Species Name')+ #y axis label
+  scale_fill_manual(breaks = c('Decrease', 'Increase'),
+                    values = c('#FDB338', '#025196'))+ #manually setting color scale
+  scale_x_continuous(breaks = scales::pretty_breaks(n=12))+
+  theme+
+  theme(axis.text.y = element_text(face = "italic"))+
+  geom_vline(xintercept = 0)
+ggsave('Species_Density_Change_subtraction.jpg', dpi = 300, height = 8, width = 6, path = "Output Graphs")
+```
+
+# Canopy
+
+This chunk of code makes table
+
+```{r}
+
+Canopy1 <- Canopy %>%
+  mutate(SumOfValue.1 = na_if(SumOfValue.1, -1), SumOfValue.2 = na_if(SumOfValue.2, -1), SumOfValue.3 = na_if(SumOfValue.3, -1),SumOfValue.4 = na_if(SumOfValue.4, -1))%>% #make -1 values NA
+  mutate(C1 = SumOfValue.1 * 1.04, C2 = SumOfValue.2 * 1.04, C3 = SumOfValue.3*1.04, C4 = SumOfValue.4*1.04) %>% #multiply by 1.04
+  mutate(PlotMean = (C1+C2+C3+C4)/4) %>% #Calculate Plot mean (n=4)
+  group_by(Year, LocationID) %>%
+  summarize (SiteMean= mean(PlotMean), SiteSD= sd(PlotMean)) %>% #calculate sitemean and standard deviation
+  mutate(Site95high = SiteMean + (1.959964*(SiteSD/sqrt(n))), #calculate high CI interval
+         Site95low = SiteMean -  (1.959964*(SiteSD/sqrt(n))))%>% #calculate low CI interval
+  mutate(Site = str_extract(LocationID, "\\d+"), #Extract site number from LocationID
+         Year= as.character(Year)) 
+
+
+Canopy2<- Canopy1 %>%
+  group_by(Year) %>%
+  summarize (YearMean= mean(SiteMean), YearSD= sd(SiteMean)) %>% #calculate park mean
+  mutate(CI95high= YearMean +(1.959964*(YearSD/sqrt(n)))) %>%  #Calculate higher limit of 95% Confidence Interval
+  mutate(CI95low= YearMean - (1.959964*(YearSD/sqrt(n)))) #calculate lower limit of confidence interval
+
+
+write.csv(Canopy2, 'Output Tables//CanopyMean.csv')
+Canopy2
+
+```
+
+This chunk of code makes canopy graph
+
+```{r}
+
+Mean_Canopy <- ggplot(Canopy2)+ ## Makes ggplot for year canopy mean
+  geom_col(aes(x = Year, y = YearMean), width= 0.5, fill = '#437d69', color = 'gray30')+ ## makes the ggplot a bar graph seperated by year
+  ylab('Mean Canopy Cover (%)')+ # y axis labe;
+  theme_minimal()+ #background theme
+  geom_errorbar(aes(x = Year, ymin = CI95low, ymax=CI95high), width = 0.1, size =0.2)+ #adding error bars
+  theme
+Mean_Canopy
+ggsave("Mean_Canopy.jpg", dpi = 300, path = "Output Graphs", height = 4)
+
+
+Canopy_by_site<- ggplot(Canopy1, aes(x = Site, y =SiteMean, fill=Year))+ # makes ggplot of canopy with color indicating site
+  geom_col(position = 'dodge')+
+   scale_fill_grey()+
+  ylab('Mean Canopy Cover (%)')+
+  theme_minimal()+
+  geom_errorbar(aes(x = Site, ymin = Site95low, ymax=Site95high), position = position_dodge(0.9), width =0.2, size =0.2)+
+  theme
+Canopy_by_site
+ggsave("Canopy_by_site.jpg", dpi = 300, path = "Output Graphs", height = 4)
+```
+
+## Canopy stats tests
+This chunk runs normality tests on the canopy data, mostly exploratory and not for report
+
+```{r}
+
+## Shapiro-Wilks test of Canopy by site mean and year
+Canopy1 %>%
+  group_by(Year)%>%
+  shapiro_test(SiteMean)%>%
+  write.table(file = "Output Tables//text.txt", sep = '\t', row.names = FALSE, col.names= TRUE)
+
+model <- aov(SiteMean ~factor(Year)+Error(factor(LocationID)), data = Canopy1)
+summary(model)
+
+# Creating dataframe that contains every plot mean
+Canopy3 <- Canopy %>%
+  mutate(SumOfValue.1 = na_if(SumOfValue.1, -1), SumOfValue.2 = na_if(SumOfValue.2, -1), SumOfValue.3 = na_if(SumOfValue.3, -1),SumOfValue.4 = na_if(SumOfValue.4, -1))%>% #make -1 values NA
+  mutate(C1 = SumOfValue.1 * 1.04, C2 = SumOfValue.2 * 1.04, C3 = SumOfValue.3*1.04, C4 = SumOfValue.4*1.04) %>% #multiply by 1.04
+  mutate(PlotMean = (C1+C2+C3+C4)/4) %>%
+  select(Year, LocationID, PlotMean)
+
+## Shapiro-Wilks test of Canopy by plot mean and year
+Canopy3 %>%
+  group_by(Year)%>%
+  shapiro_test(PlotMean)%>%
+  write.table(file = "Output Tables//text2.txt", sep = '\t', row.names = FALSE, col.names= TRUE)
+
+# As a test, ran a repeated measures anova that was not signficiant becuase data wasn't normal
+model2 <- aov(PlotMean ~factor(Year)+Error(factor(LocationID)), data = Canopy3)
+summary(model2)
+         
+# Creating histograms of canopy data with normal distribution curves to examin data more closely
+## by Plot Mean
+Canopy24 <- Canopy3  %>%
+  filter(Year == 2024)
+hist_data_24 <- hist(Canopy24$PlotMean)
+x_values_24 <- seq(min(Canopy24$PlotMean), max(Canopy24$PlotMean))
+y_values_24 <- dnorm(x_values_24, mean = mean(Canopy24$PlotMean), sd = sd(Canopy24$PlotMean)) 
+y_values_24 <- y_values_24 * diff(hist_data_24$mids[1:2]) * length(Canopy24$PlotMean) 
+lines(x_values_24, y_values_24, lwd = 2)
+
+Canopy14 <- Canopy3  %>%
+  filter(Year == 2014)
+hist_data_14 <- hist(Canopy14$PlotMean)
+x_values_14 <- seq(min(Canopy14$PlotMean), max(Canopy14$PlotMean))
+y_values_14 <- dnorm(x_values_14, mean = mean(Canopy14$PlotMean), sd = sd(Canopy14$PlotMean)) 
+y_values_14 <- y_values_14 * diff(hist_data_14$mids[1:2]) * length(Canopy14$PlotMean) 
+lines(x_values_14, y_values_14, lwd = 2)
+
+Canopy07 <- Canopy3  %>%
+  filter(Year == 2007)
+hist_data_07 <- hist(Canopy07$PlotMean)
+x_values_07 <- seq(min(Canopy07$PlotMean), max(Canopy07$PlotMean))
+y_values_07 <- dnorm(x_values_07, mean = mean(Canopy07$PlotMean), sd = sd(Canopy07$PlotMean)) 
+y_values_07 <- y_values_07 * diff(hist_data_07$mids[1:2]) * length(Canopy07$PlotMean) 
+lines(x_values_07, y_values_07, lwd = 2)
+
+## by site mean
+Canopy24 <- Canopy1  %>%
+  filter(Year == 2024)
+hist_data_24 <- hist(Canopy24$SiteMean)
+x_values_24 <- seq(min(Canopy24$SiteMean), max(Canopy24$SiteMean))
+y_values_24 <- dnorm(x_values_24, mean = mean(Canopy24$SiteMean), sd = sd(Canopy24$SiteMean)) 
+y_values_24 <- y_values_24 * diff(hist_data_24$mids[1:2]) * length(Canopy24$SiteMean) 
+lines(x_values_24, y_values_24, lwd = 2)
+
+Canopy14 <- Canopy1  %>%
+  filter(Year == 2014)
+hist_data_14 <- hist(Canopy14$SiteMean)
+x_values_14 <- seq(min(Canopy14$SiteMean), max(Canopy14$SiteMean))
+y_values_14 <- dnorm(x_values_14, mean = mean(Canopy14$SiteMean), sd = sd(Canopy14$SiteMean)) 
+y_values_14 <- y_values_14 * diff(hist_data_14$mids[1:2]) * length(Canopy14$SiteMean) 
+lines(x_values_14, y_values_14, lwd = 2)
+
+Canopy07 <- Canopy1  %>%
+  filter(Year == 2007)
+hist_data_07 <- hist(Canopy07$SiteMean)
+x_values_07 <- seq(min(Canopy07$SiteMean), max(Canopy07$SiteMean))
+y_values_07 <- dnorm(x_values_07, mean = mean(Canopy07$SiteMean), sd = sd(Canopy07$SiteMean)) 
+y_values_07 <- y_values_07 * diff(hist_data_07$mids[1:2]) * length(Canopy07$SiteMean) 
+lines(x_values_07, y_values_07, lwd = 2)
+
+friedman.test(y = Canopy1$SiteMean, groups = Canopy1$Year, blocks = Canopy1$Site)
+
+```
+
+# Regeneration
+
+This chunk of code calculates regeneration density by  Class
+
+```{r}
+
+Type_Regen <- Regeneration %>%
+  rename(Seedling = SumOfSeedling, SmallSapling = SumOfSmallSapling, LargeSapling = SumOfLargeSapling)%>%
+  select(Year, LocationID, AcceptedSpecies, Seedling, SmallSapling, LargeSapling)%>%
+  pivot_longer(cols = c(Seedling, SmallSapling, LargeSapling), names_to = "Class", values_to = "Count")%>%
+  group_by(Year,LocationID, Class)%>%
+  summarise(Sum = sum(Count))%>% #Sum all species for a site/year combination
+  mutate(Sum_ha = Sum/0.1)%>% #scale by a factor of 10
+  group_by(Year, Class)%>% 
+  summarise(MeanDensity = (sum(Sum_ha)/n), #calculate mean park density
+            SD = sd(Sum_ha))%>% #calculate SD
+  mutate(low = MeanDensity - (1.959964*(SD/sqrt(5))), #calculate low end of 95 conf interval
+         high = MeanDensity + (1.959964*(SD/sqrt(5))),#calculate low end of 95 conf interval
+         Year = as.character(Year))
+
+write.csv(Type_Regen, "Output Tables//Regen_MeanDensity_by_Type.csv")
+Type_Regen
+
+```
+
+This chunk makes a graph of regeneration density by class 
+
+```{r}
+TypeRegen_graph <-Type_Regen %>%
+  arrange(MeanDensity)%>%
+  mutate(Class = factor(Class, levels=c("Seedling", "SmallSapling", "LargeSapling")))%>% #manually setting order based on size, not alphabetized
+  ggplot(aes(x = Class, y =MeanDensity, fill=Year))+
+  geom_col(position = "dodge")+ #sets bars next to each other
+  geom_errorbar(aes(x = Class, ymin = low, ymax= high), width = 0.2, position = position_dodge(0.9), , size =0.2)+ #add error bar
+  theme_minimal()+
+  ylab('Mean Density (stems/ha)')+
+  scale_fill_grey()+
+  theme
+
+TypeRegen_graph
+ggsave('Regeneratoin_Type.jpg', path = "Output Graphs", dpi= 300)
+  
+```
+
+Regen by species analysis code
+
+```{r}
+#this creates the dataframe used to generate graphs
+Regen_Species <- Regeneration %>%
+  rename(Seedling = SumOfSeedling, SmallSapling = SumOfSmallSapling, LargeSapling = SumOfLargeSapling)%>%
+  select(Year, LocationID, AcceptedSpecies, Seedling, SmallSapling, LargeSapling) %>%
+  pivot_longer(cols = c(Seedling, SmallSapling, LargeSapling), names_to = "Class", values_to = "Count")%>%
+  mutate(Density_ha = Count/0.1)%>% #convert to stem/ha
+  select(!Count)%>%
+  group_by(Year, AcceptedSpecies, Class)%>% #sort by species each year
+  summarise(Year_Density = (sum(Density_ha)/n)) %>% #sum stems/ha and divide by # sites
+  pivot_wider(names_from = Year, values_from = Year_Density)%>% #create wider pivot table to species is one line
+  arrange(AcceptedSpecies)%>% #arrange alphabetically
+  rename(y2007 = "2007", y2014 = "2014", y2024 = "2024")%>% #change year column names in order to run calc
+  mutate(
+    y2024 = if_else(is.na(y2024),0,y2024), #set 2024 na values to 0
+         Change =(((y2024 - y2007)/y2007)*100), #calculate % change in density
+         y2007 = if_else(is.na(y2007),0,y2007), #set 2007 values to 0
+         y2014 = if_else(is.na(y2014),0,y2014), #set 2014 values to 0
+    Change_s = y2024 - y2007, #calculate difference in density
+     Direction = if_else(Change_s>0, "Increase","Decrease"), #set increase/decrease value based on difference
+        Direction = if_else(Change_s == 0, NA, Direction), #make 0 change NA
+         test = y2007+y2014+y2024) %>% 
+   filter(test >0) %>% #test to filter out specific species/class combos that have '0' values across all years so they don't display in graph
+  rename("2007" = y2007, "2014" = y2014, "2024" = y2024) #fix year column names
+
+#this creates the wider dataframe to export
+Regen_Species_Table <- Regeneration  %>%
+  rename(Seedling = SumOfSeedling, SmallSapling = SumOfSmallSapling, LargeSapling = SumOfLargeSapling)%>%
+  select(Year, LocationID, AcceptedSpecies, Seedling, SmallSapling, LargeSapling)%>%
+  mutate(Seedling = Seedling/0.1, SmallSapling = SmallSapling/0.1, LargeSapling = LargeSapling/0.1)%>% #convert to stem/ha
+  group_by(Year, AcceptedSpecies) %>% #sort by species each year
+  summarise(Seedling = sum(Seedling)/n,#sum stems/ha and divide by # sites
+            SmallSapling = sum(SmallSapling)/n,#sum stems/ha and divide by # sites
+            LargeSapling = sum(LargeSapling)/n) %>%#sum stems/ha and divide by # sites
+  pivot_wider(names_from = Year, values_from = c(Seedling, SmallSapling, LargeSapling))  %>%
+  mutate(across(2:10, ~replace_na(.,0)),
+    Seedling_Change =(Seedling_2024 - Seedling_2007)/Seedling_2007*100,#calculate % change in density
+         SmallSapling_Change = (SmallSapling_2024 - SmallSapling_2007)/SmallSapling_2007 *100,#calculate % change in density
+         LargeSapling_Change = (LargeSapling_2024 - LargeSapling_2007)/LargeSapling_2007 *100,#calculate % change in density
+    across(where(is.numeric), ~round (.,2))
+    )%>%
+  mutate_if(is.numeric, list(~na_if(., Inf)), #create NA values
+            is.numeric, list(~na_if(.,NaN)))%>% #create NA values
+  arrange(AcceptedSpecies)
+
+
+write.csv(Regen_Species_Table, "Output Tables//Regen_byType_Species.csv")
+Regen_Species_Table
+  
+```
+This chunk makes change graphs for regeneration by species, each class is graphed alone
+```{r}
+# % Change graphs
+
+## Seedling
+Regen_Species %>%
+  filter(Class == 'Seedling') %>% #filter for seedlings
+  ggplot(aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change, fill = Direction))+ #ggplot y axis barplot with colors based on increase or decrease
+  geom_col(width = 0.4)+ #width of columns
+  theme_minimal()+
+  xlab('% Change in Mean Density (Stems/ha)')+
+  ylab('Species Name')+
+  labs(title = 'Seedlings')+
+  scale_fill_manual(breaks = c('Decrease','Increase'),
+                    values = c('#FDB338', '#025196'))+ #sets color for increase/decrease
+  scale_x_continuous(breaks = scales::pretty_breaks(n=15))+ #changes number of ticks on x axis
+  theme+
+  theme(axis.text.y = element_text(face = "italic"), #makes species names italic
+        axis.text.x = element_text(angle = 90))+
+  geom_vline(xintercept = 0)
+ggsave('Regeneration_Species_Seedling.jpg', path = "Output Graphs", dpi= 300, height = 6)
+  
+## Small Sapling
+Regen_Species %>%
+  filter(Class == 'SmallSapling') %>% #filter for small saplings
+  ggplot(aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change, fill = Direction))+#ggplot y axis barplot with colors based on increase or decrease
+  geom_col(width = 0.4)+#width of columns
+  theme_minimal()+
+  xlab('% Change in Mean Density (Stems/ha)')+
+  ylab('Species Name')+
+  labs(title = 'Small Saplings')+
+  scale_fill_manual(breaks = c('Decrease','Increase'),
+                    values = c('#FDB338', '#025196'))+#sets color for increase/decrease
+  scale_x_continuous(breaks = scales::pretty_breaks(n=15))+#changes number of ticks on x axis
+  theme+
+  theme(axis.text.y = element_text(face = "italic"),#makes species names italic
+        axis.text.x = element_text(angle = 90))+
+  geom_vline(xintercept = 0)
+ggsave('Regeneration_Species_SmallSap.jpg', path = "Output Graphs", dpi= 300, height = 6)
+
+## Large Sapling
+Regen_Species %>%
+  filter(Class == 'LargeSapling') %>% #filter for large saplings
+  ggplot(aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change, fill = Direction))+#ggplot y axis barplot with colors based on increase or decrease
+  geom_col(width = 0.4)+#width of columns
+  theme_minimal()+
+  xlab('% Change in Mean Density (Stems/ha)')+
+  ylab('Species Name')+
+  labs(title = 'Large Saplings')+
+  scale_fill_manual(breaks = c(breaks = c('Decrease','Increase')),
+                    values = c('#FDB338', '#025196'))+#sets color for increase/decrease
+  theme+
+  theme(axis.text.y = element_text(face = "italic"))+#makes species names italic
+  geom_vline(xintercept = 0)
+ggsave('Regeneration_Species_LargeSap.jpg', path = "Output Graphs", dpi= 300, height = 6)
+
+# test- difference graphs
+
+## Seedling
+Regen_Species %>%
+  filter(Class == 'Seedling') %>% #filter for seedlings
+  ggplot(aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change_s, fill = Direction))+ #ggplot y axis barplot with colors based on increase or decrease
+  geom_col(width = 0.4)+ #width of columns
+  theme_minimal()+
+  xlab('Change in Mean Density (Stems/ha)')+
+  ylab('Species Name')+
+  labs(title = 'Seedlings')+
+  scale_fill_manual(breaks = c('Decrease','Increase'),
+                    values = c('#FDB338', '#025196'))+ #sets color for increase/decrease
+  scale_x_continuous(breaks = scales::pretty_breaks(n=15))+ #changes number of ticks on x axis
+  theme+
+  theme(axis.text.y = element_text(face = "italic"), #makes species names italic
+        axis.text.x = element_text(angle = 90))+
+  geom_vline(xintercept = 0)
+ggsave('Regeneration_Species_Seedling_subtraction.jpg', path = "Output Graphs", dpi= 300, height = 6)
+  
+## Small Sapling
+Regen_Species %>%
+  filter(Class == 'SmallSapling') %>% #filter for small saplings
+  ggplot(aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change_s, fill = Direction))+#ggplot y axis barplot with colors based on increase or decrease
+  geom_col(width = 0.4)+#width of columns
+  theme_minimal()+
+  xlab('Change in Mean Density (Stems/ha)')+
+  ylab('Species Name')+
+  labs(title = 'Small Saplings')+
+  scale_fill_manual(breaks = c('Decrease','Increase'),
+                    values = c('#FDB338', '#025196'))+#sets color for increase/decrease
+  scale_x_continuous(breaks = scales::pretty_breaks(n=15))+#changes number of ticks on x axis
+  theme+
+  theme(axis.text.y = element_text(face = "italic"),#makes species names italic
+        axis.text.x = element_text(angle = 90))+
+  geom_vline(xintercept = 0)
+ggsave('Regeneration_Species_SmallSap_subtraction.jpg', path = "Output Graphs", dpi= 300, height = 6)
+
+## Large Sapling
+Regen_Species %>%
+  filter(Class == 'LargeSapling') %>% #filter for large saplings
+  ggplot(aes(y = reorder(AcceptedSpecies, desc(AcceptedSpecies)), x = Change_s, fill = Direction))+#ggplot y axis barplot with colors based on increase or decrease
+  geom_col(width = 0.4)+#width of columns
+  theme_minimal()+
+  xlab('Change in Mean Density (Stems/ha)')+
+  ylab('Species Name')+
+  labs(title = 'Large Saplings')+
+  scale_fill_manual(breaks = c(breaks = c('Decrease','Increase')),
+                    values = c('#FDB338', '#025196'))+#sets color for increase/decrease
+  theme+
+  theme(axis.text.y = element_text(face = "italic"))+#makes species names italic
+  geom_vline(xintercept = 0)
+ggsave('Regeneration_Species_LargeSap_subtraction.jpg', path = "Output Graphs", dpi= 300, height = 6)
+
+```
