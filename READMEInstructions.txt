@@ -36,5 +36,5 @@ install.packages("purr")
 
 Check that your data is named correctly (see step 3 above) including capitalization, and saved in the "data" subfolder as csv files
 
-Check that you have correctly entered the park code and sites in the params of the code (see step 6). When you edit line 10 (sites) make sure to only edit the numbers within the parentheses and make sure you have not accidently deleted !expr c()
+Check that you have correctly entered the park code and sites in the params of the code (see step 6).
 
